@@ -104,7 +104,11 @@ while [ $SECONDS -lt $deadline ]; do
       passed=1
       break
     fi
-    echo "  not yet ($ip): ${answer:0:120}"
+    case $answer in
+      *SSL* | *TLS* | *"timed out"* | *"Connection reset"*)
+        echo "  not yet ($ip): the HTTPS certificate is still being issued, the first calls often fail like this" ;;
+      *) echo "  not yet ($ip): ${answer:0:120}" ;;
+    esac
   else
     echo "  $host is not in public DNS yet"
   fi

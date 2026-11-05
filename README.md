@@ -66,4 +66,8 @@ WIRECAT_FUNNEL_TEST_BINARY=packages/funnel-linux-x64/bin/wirecat-funnel npm test
 bin/live-check      # one real Funnel check on a temporary device; you sign in in the browser
 ```
 
+`bin/live-check` passed end to end on 2026-11-05: the call through public DNS reached the server, and the helper never
+looked up Tailscale's log server. When to run it, what PASS means and why the first calls fail while the certificate
+is issued: [docs/TESTING.md](docs/TESTING.md). Releasing: [docs/RELEASING.md](docs/RELEASING.md).
+
 Apache-2.0. `THIRD_PARTY_NOTICES` lists every Go module the binary links, Tailscale's BSD-3-Clause among them.
