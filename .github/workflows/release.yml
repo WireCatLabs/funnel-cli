@@ -48,8 +48,8 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: |
-          for tarball in dist/wirecat-funnel-*-"$VERSION".tgz; do npm publish "$tarball" --provenance --access public; done
-          npm publish "dist/wirecat-funnel-$VERSION.tgz" --provenance --access public
+          for tarball in ./dist/wirecat-funnel-*-"$VERSION".tgz; do npm publish "$tarball" --provenance --access public; done
+          npm publish "./dist/wirecat-funnel-$VERSION.tgz" --provenance --access public
       - name: tag
         env:
           VERSION: ${{ inputs.version }}
