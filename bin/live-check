@@ -111,5 +111,12 @@ while [ $SECONDS -lt $deadline ]; do
   sleep 15
 done
 
-echo "Lookups of log.tailscale.com by the helper: $(grep -c 'log.tailscale.com' "$work/run.log" || true)"
+log_lookups=$(grep -c 'log.tailscale.com' "$work/run.log" || true)
+echo "Lookups of log.tailscale.com by the helper: $log_lookups"
+if [ "$log_lookups" != 0 ]; then
+  passed=0
+  echo "FAIL: the helper looked up Tailscale's log server. The privacy texts (cli-docs#552, wirecat-desktop#99) must not merge."
+  exit 1
+fi
 [ "$passed" = 1 ] || { echo "FAIL: no answer from outside within 10 minutes."; exit 1; }
+echo "PASS: Funnel works end to end, and Tailscale's log server was never looked up."
