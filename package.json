@@ -1,6 +1,6 @@
 {
   "name": "@wirecat/funnel",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Publish local WireCat MCP servers through Tailscale Funnel, with no administrator rights and Tailscale's log upload off",
   "license": "Apache-2.0",
   "author": "WireCat Labs",
@@ -24,12 +24,12 @@
     "notices": "node scripts/packages.mjs notices"
   },
   "optionalDependencies": {
-    "@wirecat/funnel-darwin-arm64": "0.1.0",
-    "@wirecat/funnel-darwin-x64": "0.1.0",
-    "@wirecat/funnel-linux-arm64": "0.1.0",
-    "@wirecat/funnel-linux-x64": "0.1.0",
-    "@wirecat/funnel-win32-arm64": "0.1.0",
-    "@wirecat/funnel-win32-x64": "0.1.0"
+    "@wirecat/funnel-darwin-arm64": "0.1.1",
+    "@wirecat/funnel-darwin-x64": "0.1.1",
+    "@wirecat/funnel-linux-arm64": "0.1.1",
+    "@wirecat/funnel-linux-x64": "0.1.1",
+    "@wirecat/funnel-win32-arm64": "0.1.1",
+    "@wirecat/funnel-win32-x64": "0.1.1"
   },
   "publishConfig": {
     "access": "public"
