@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# NEED-74: one end-to-end Funnel check on an ephemeral node. The owner signs in in the browser; this script never does.
+# It builds the helper, serves a dummy MCP endpoint, publishes it through Funnel, calls it from outside, and stops.
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+work=$(mktemp -d "${TMPDIR:-/tmp}/wirecat-funnel-check.XXXXXX")
+helper_pid="" dummy_pid="" passed=0
+
+json() { python3 -I -c "import json,sys; v=json.load(sys.stdin).get('$1'); print('' if v is None else v)"; }
+
+finish() {
+  if [ -n "$helper_pid" ] && kill -0 "$helper_pid" 2>/dev/null; then
+    echo "Stopping the helper; an ephemeral node logs out, which removes it from the tailnet."
+    "$work/wirecat-funnel" stop >/dev/null 2>&1 || kill "$helper_pid" 2>/dev/null || true
+  fi
+  [ -n "$dummy_pid" ] && kill "$dummy_pid" 2>/dev/null || true
+  if [ "$passed" = 1 ]; then
+    rm -rf "$work"
+  else
+    echo "Kept $work for a look (run.log, dummy.log)."
+    echo "If the node wirecat-check is still listed at https://login.tailscale.com/admin/machines, remove it there."
+  fi
+}
+trap finish EXIT
+trap 'exit 130' INT TERM
+
+for tool in go python3 curl dig; do
+  command -v "$tool" >/dev/null || { echo "needs $tool on PATH"; exit 1; }
+done
+
+echo "Building the helper…"
+(cd "$root" && CGO_ENABLED=0 nice -n 10 go build -p 4 -trimpath -o "$work/wirecat-funnel" ./cmd/wirecat-funnel)
+
+python3 -I - "$work/dummy.port" >"$work/dummy.log" 2>&1 <<'PY' &
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        print("request from", self.headers.get("X-Forwarded-For"), "host", self.headers.get("Host"), flush=True)
+        answer = {"jsonrpc": "2.0", "id": body.get("id"), "result": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "serverInfo": {"name": "wirecat-funnel-check", "version": "1"}}}
+        data = json.dumps(answer).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+server = HTTPServer(("127.0.0.1", 0), Handler)
+open(sys.argv[1], "w").write(str(server.server_port))
+server.serve_forever()
+PY
+dummy_pid=$!
+for _ in $(seq 50); do [ -s "$work/dummy.port" ] && break; sleep 0.1; done
+port=$(cat "$work/dummy.port")
+echo "Dummy MCP endpoint on 127.0.0.1:$port"
+
+export WIRECAT_FUNNEL_STATE_DIR="$work/state"
+"$work/wirecat-funnel" route add /mcp "$port" >/dev/null
+# netdns=go+2 makes Go print every name it looks up, so the end can show that log.tailscale.com never was.
+GODEBUG=netdns=go+2 "$work/wirecat-funnel" run --ephemeral --hostname wirecat-check --funnel-only \
+  >"$work/run.log" 2>&1 &
+helper_pid=$!
+
+url="" shown="" deadline=$((SECONDS + 600))
+while [ $SECONDS -lt $deadline ]; do
+  status=$("$work/wirecat-funnel" status --json)
+  state=$(json state <<<"$status")
+  action=$(json action_url <<<"$status")
+  if [ "$state:$action" != "$shown" ]; then
+    case $state in
+      needs-login) echo; echo "Sign in to Tailscale in your browser:"; echo "  $action"; echo ;;
+      needs-approval) echo "Approve the device wirecat-check: $action" ;;
+      needs-funnel) echo "Allow Funnel for this device: $action" ;;
+      error) echo "Helper error: $(json error <<<"$status")" ;;
+      stopped | starting) echo "Starting the helper…" ;;
+      *) echo "State: $state" ;;
+    esac
+    shown="$state:$action"
+  fi
+  if [ "$state" = running ]; then url=$(json url <<<"$status"); break; fi
+  kill -0 "$helper_pid" 2>/dev/null || { echo "The helper stopped; see $work/run.log"; exit 1; }
+  sleep 2
+done
+[ -n "$url" ] || { echo "Not running after 10 minutes."; exit 1; }
+echo "Funnel is on: $url"
+
+host=${url#https://}
+request='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"live-check","version":"1"}}}'
+echo "Calling $url/mcp through public DNS (1.1.1.1), not the tailnet. A new name can take up to 10 minutes to appear."
+deadline=$((SECONDS + 600))
+while [ $SECONDS -lt $deadline ]; do
+  ip=$(dig +short @1.1.1.1 "$host" A | grep -E '^[0-9.]+$' | head -1 || true)
+  if [ -n "$ip" ]; then
+    answer=$(curl -sS --max-time 20 --resolve "$host:443:$ip" -X POST "https://$host/mcp" \
+      -H 'Content-Type: application/json' -d "$request" 2>&1 || true)
+    if grep -q wirecat-funnel-check <<<"$answer"; then
+      echo "PASS: the dummy server answered through Funnel ($ip)."
+      echo "Seen by the server: $(tail -1 "$work/dummy.log")"
+      passed=1
+      break
+    fi
+    echo "  not yet ($ip): ${answer:0:120}"
+  else
+    echo "  $host is not in public DNS yet"
+  fi
+  sleep 15
+done
+
+log_lookups=$(grep -c 'log.tailscale.com' "$work/run.log" || true)
+echo "Lookups of log.tailscale.com by the helper: $log_lookups"
+if [ "$log_lookups" != 0 ]; then
+  passed=0
+  echo "FAIL: the helper looked up Tailscale's log server. The privacy texts (cli-docs#552, wirecat-desktop#99) must not merge."
+  exit 1
+fi
+[ "$passed" = 1 ] || { echo "FAIL: no answer from outside within 10 minutes."; exit 1; }
+echo "PASS: Funnel works end to end, and Tailscale's log server was never looked up."

@@ -1,0 +1,57 @@
+name: Release
+
+# Manual only. npm provenance needs a public repository, so this cannot run while funnel-cli is private.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version in package.json, typed again to confirm"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      pack: true
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: version matches
+        env:
+          WANTED: ${{ inputs.version }}
+        run: |
+          actual=$(node -p 'require("./package.json").version')
+          [ "$actual" = "$WANTED" ] || { echo "::error::package.json is $actual, not $WANTED"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: validated-packages
+          path: dist
+      - run: cd dist && sha256sum -c SHA256SUMS
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # The platform packages first: the main package's optionalDependencies must exist when it is installed.
+      - name: publish
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          for tarball in dist/wirecat-funnel-*-"$VERSION".tgz; do npm publish "$tarball" --provenance --access public; done
+          npm publish "dist/wirecat-funnel-$VERSION.tgz" --provenance --access public
+      - name: tag
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/v$VERSION" -f sha="$GITHUB_SHA"
