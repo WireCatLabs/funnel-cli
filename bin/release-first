@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# The first publish of the seven @wirecat/funnel packages, from the owner's computer, then npm trusted publishing for
+# release.yml on each (npm sets a trusted publisher only on a package that exists). Later versions go through
+# release.yml. Needs `npm login` with 2FA. Prints no token.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+cd "$root"
+
+[ -z "$(git status --porcelain)" ] || { echo "the working tree is not clean"; exit 1; }
+git fetch -q origin main
+[ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "check out an up-to-date main first"; exit 1; }
+npm whoami >/dev/null 2>&1 || { echo "sign in first: npm login"; exit 1; }
+
+version=$(node -p 'require("./package.json").version')
+if npm view "@wirecat/funnel@$version" version >/dev/null 2>&1; then
+  echo "@wirecat/funnel@$version is already on npm"
+else
+  node scripts/packages.mjs check
+  GOFLAGS=-p=4 nice -n 10 node scripts/packages.mjs build
+  for dir in packages/funnel-*; do
+    name=$(node -p "require('./$dir/package.json').name")
+    if npm view "$name@$version" version >/dev/null 2>&1; then echo "$name@$version already on npm"; continue; fi
+    (cd "$dir" && npm publish --access public)
+  done
+  npm publish --access public
+fi
+
+for name in @wirecat/funnel @wirecat/funnel-{darwin,linux,win32}-{x64,arm64}; do
+  if npm trust list "$name" 2>/dev/null | grep -q release.yml; then echo "$name already trusts release.yml"; continue; fi
+  npm trust github "$name" --repository WireCatLabs/funnel-cli --file release.yml --environment npm --allow-publish --yes
+done
+echo "Done. Release the next version through release.yml: docs/RELEASING.md"
